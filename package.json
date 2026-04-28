@@ -1,0 +1,31 @@
+{
+  "name": "mdash",
+  "version": "1.0.0",
+  "description": "Markdown-first revenue dashboard for solo operators — pulls App Store, Google Play, and PostHog into a weekly markdown report. Bundles a Claude Code skill for the Friday review walkthrough.",
+  "scripts": {
+    "dashboard": "tsx src/index.ts",
+    "test:asc": "tsx src/fetchAsc.ts",
+    "test:gplay": "tsx src/fetchGplay.ts",
+    "test:posthog": "tsx src/fetchPosthog.ts"
+  },
+  "keywords": [],
+  "author": "Wesley Ng",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "googleapis": "^171.4.0",
+    "jsonwebtoken": "^9.0.3",
+    "undici": "^8.1.0"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^25.6.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wesngyvr-lab/mdash.git"
+  }
+}

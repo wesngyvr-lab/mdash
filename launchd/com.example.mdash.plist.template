@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  mdash launchd template — schedules the weekly dashboard refresh.
+
+  Setup:
+    1. Replace placeholders below:
+       {{HOME}}      → /Users/yourname
+       {{NPM_BIN}}   → output of `which npm` (e.g. /usr/local/bin/npm or /opt/homebrew/bin/npm)
+       {{LABEL}}     → reverse-DNS unique label (e.g. com.yourname.mdash)
+    2. Save as ~/Library/LaunchAgents/{{LABEL}}.plist
+    3. Load: launchctl bootstrap gui/$UID ~/Library/LaunchAgents/{{LABEL}}.plist
+    4. Verify: launchctl list | grep mdash
+    5. Trigger manually: launchctl kickstart -k gui/$UID/{{LABEL}}
+
+  Schedule below: every Friday at 3:00pm local time.
+  Edit StartCalendarInterval to change.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{{LABEL}}</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string>cd {{HOME}}/path/to/mdash &amp;&amp; {{NPM_BIN}} run dashboard &amp;&amp; /usr/bin/osascript -e 'display notification "Dashboard updated" with title "mdash" sound name "Glass"'</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>5</integer>
+        <key>Hour</key>
+        <integer>15</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>{{HOME}}/path/to/mdash/launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{HOME}}/path/to/mdash/launchd.err</string>
+</dict>
+</plist>
