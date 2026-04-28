@@ -4,7 +4,8 @@
 secrets/
 
 # Live launchd plist (contains user-specific paths)
-launchd/com.wesleyng.*.plist
+# Live launchd plists (only the .template file should be committed)
+launchd/*.plist
 
 # Runtime logs
 launchd.log

@@ -21,7 +21,7 @@ async function main() {
         ? appStoreResult.value
         : {
             source: 'app_store',
-            appName: 'TileBuddy',
+            appName: process.env.APP_NAME ?? 'App',
             windows: {
               '7d': { downloads: 0, revenueUsd: 0 },
               '30d': { downloads: 0, revenueUsd: 0 },
@@ -36,7 +36,7 @@ async function main() {
         ? googlePlayResult.value
         : {
             source: 'google_play',
-            appName: 'TileBuddy',
+            appName: process.env.APP_NAME ?? 'App',
             windows: {
               '7d': { downloads: 0, revenueUsd: 0 },
               '30d': { downloads: 0, revenueUsd: 0 },
