@@ -45,24 +45,47 @@ async function fetchProject(
     topPages: [],
   };
 
-  try {
-    for (const w of WINDOWS) {
-      const days = WINDOW_DAYS[w];
-      const sql = `
-        SELECT count() AS pageviews,
-               count(DISTINCT distinct_id) AS uniques
-        FROM events
-        WHERE event IN ('$pageview', '$screen')
-          AND timestamp >= now() - INTERVAL ${days} DAY
-      `;
-      const rows = await runQuery(host, apiKey, projectId, sql);
-      const [pageviews = 0, uniques = 0] = rows[0] ?? [];
-      result.windows[w] = {
-        pageviews: Number(pageviews),
-        uniqueVisitors: Number(uniques),
-      };
-    }
+  // One scan for all four windows instead of four separate ones.
+  //
+  // The old loop ran a query per window, and the 365-day one used
+  // count(DISTINCT distinct_id) — an exact distinct over a year of events.
+  // That reliably hit PostHog's max execution time and returned a 504, so
+  // wesley-ng.com's 365d row read 0. uniq() is ClickHouse's approximate
+  // HyperLogLog count: far cheaper, and well inside tolerance for a
+  // dashboard number.
+  const windowSql = `
+    SELECT
+      countIf(timestamp >= now() - INTERVAL 7 DAY)                 AS pv7,
+      uniqIf(distinct_id, timestamp >= now() - INTERVAL 7 DAY)     AS u7,
+      countIf(timestamp >= now() - INTERVAL 30 DAY)                AS pv30,
+      uniqIf(distinct_id, timestamp >= now() - INTERVAL 30 DAY)    AS u30,
+      countIf(timestamp >= now() - INTERVAL 90 DAY)                AS pv90,
+      uniqIf(distinct_id, timestamp >= now() - INTERVAL 90 DAY)    AS u90,
+      count()                                                      AS pv365,
+      uniq(distinct_id)                                            AS u365
+    FROM events
+    WHERE event IN ('$pageview', '$screen')
+      AND timestamp >= now() - INTERVAL 365 DAY
+  `;
 
+  const errors: string[] = [];
+
+  // Each query is isolated. Previously a single failure aborted the rest of
+  // the function, so a timeout on the widest window also silently cost us
+  // the top-pages list.
+  try {
+    const rows = await runQuery(host, apiKey, projectId, windowSql);
+    const r = rows[0] ?? [];
+    const n = (i: number) => Number(r[i] ?? 0);
+    result.windows['7d'] = { pageviews: n(0), uniqueVisitors: n(1) };
+    result.windows['30d'] = { pageviews: n(2), uniqueVisitors: n(3) };
+    result.windows['90d'] = { pageviews: n(4), uniqueVisitors: n(5) };
+    result.windows['365d'] = { pageviews: n(6), uniqueVisitors: n(7) };
+  } catch (err) {
+    errors.push(`windows: ${(err as Error).message}`);
+  }
+
+  try {
     const topSql = `
       SELECT properties.$pathname AS path, count() AS views
       FROM events
@@ -79,9 +102,10 @@ async function fetchProject(
       views: Number(views ?? 0),
     }));
   } catch (err) {
-    const e = err as Error & { cause?: unknown };
-    result.error = `${e.message}${e.cause ? ' | cause: ' + JSON.stringify(e.cause, Object.getOwnPropertyNames(e.cause)) : ''}`;
+    errors.push(`topPages: ${(err as Error).message}`);
   }
+
+  if (errors.length) result.error = errors.join(' | ');
 
   return result;
 }
