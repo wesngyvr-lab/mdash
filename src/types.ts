@@ -35,6 +35,9 @@ export type DashboardData = {
   generatedAt: string;
   appStore: AppMetrics;
   googlePlay: AppMetrics;
+  /** App Store proceeds from the FINANCIAL report — see fetchFinance.ts for
+   *  why revenue can't come from the same place as downloads. */
+  finance?: import('./fetchFinance.js').FinanceMetrics;
   webMetrics: WebMetrics[];
 };
 

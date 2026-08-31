@@ -1,6 +1,7 @@
 import { writeFileSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { WINDOWS, type AppMetrics, type DashboardData, type WebMetrics } from './types.js';
+import type { FinanceMetrics } from './fetchFinance.js';
 
 const OUTPUT_DIR =
   process.env.DASHBOARD_OUTPUT_DIR ??
@@ -73,6 +74,48 @@ function webSection(m: WebMetrics): string {
   return s;
 }
 
+function fmtMoney(amount: number, currency: string): string {
+  try {
+    return amount.toLocaleString('en-US', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: 2,
+    });
+  } catch {
+    // Unknown currency code — show the number with the code beside it.
+    return `${amount.toFixed(2)} ${currency}`;
+  }
+}
+
+function financeSection(f: FinanceMetrics): string {
+  let s = '### Revenue (App Store proceeds)\n\n';
+
+  const lifetime = Object.entries(f.lifetimeByCurrency).filter(([, v]) => v !== 0);
+  if (lifetime.length === 0) {
+    s += '_No proceeds recorded in the last 13 fiscal months._\n';
+    if (f.error) s += `\n> ⚠️ ${f.error}\n`;
+    return s;
+  }
+
+  s += '**Lifetime (last 13 fiscal months):** ';
+  s += lifetime.map(([cur, amt]) => `**${fmtMoney(amt, cur)}**`).join(' · ');
+  s += '\n\n';
+
+  s += '| Fiscal month | Units | Proceeds |\n|---|---|---|\n';
+  for (const m of f.months) {
+    const entries = Object.entries(m.proceedsByCurrency).filter(([, v]) => v !== 0);
+    if (entries.length === 0) continue; // skip empty months, they add nothing
+    const amounts = entries.map(([cur, amt]) => fmtMoney(amt, cur)).join(' · ');
+    s += `| ${m.month} | ${fmtNum(m.units)} | ${amounts} |\n`;
+  }
+  s += '\n_Proceeds are what Apple pays you, after its cut. Reported per fiscal';
+  s += ' month (Apple fiscal months do not match calendar months) and never';
+  s += ' currency-converted._\n';
+
+  if (f.error) s += `\n> ⚠️ ${f.error}\n`;
+  return s;
+}
+
 export function render(data: DashboardData): string {
   const ts = data.generatedAt;
   const appName = process.env.APP_NAME ?? data.appStore.appName ?? 'App';
@@ -82,7 +125,12 @@ export function render(data: DashboardData): string {
   md += '\n';
   md += appSection('Google Play (Android)', data.googlePlay);
   md += '\n';
-  md += `\\* Revenue in USD only — non-USD App Store proceeds excluded for v1.\n\n`;
+  if (data.finance) {
+    md += financeSection(data.finance);
+    md += '\n';
+  }
+  md += `\\* The Revenue column above is always 0 — the daily sales report does not\n`;
+  md += `carry proceeds. Real revenue is in the Revenue section below.\n\n`;
 
   if (data.webMetrics.length > 0) {
     md += `## Web Analytics (PostHog)\n\n`;

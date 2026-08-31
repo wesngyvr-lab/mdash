@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { fetchAsc } from './fetchAsc.js';
 import { fetchGplay } from './fetchGplay.js';
+import { fetchFinance } from './fetchFinance.js';
 import { fetchPosthog } from './fetchPosthog.js';
 import { writeDashboard } from './render.js';
 import type { DashboardData } from './types.js';
@@ -8,11 +9,13 @@ import type { DashboardData } from './types.js';
 async function main() {
   console.log('Fetching from all sources in parallel...');
 
-  const [appStoreResult, googlePlayResult, webMetricsResult] = await Promise.allSettled([
-    fetchAsc(),
-    fetchGplay(),
-    fetchPosthog(),
-  ]);
+  const [appStoreResult, googlePlayResult, webMetricsResult, financeResult] =
+    await Promise.allSettled([
+      fetchAsc(),
+      fetchGplay(),
+      fetchPosthog(),
+      fetchFinance(),
+    ]);
 
   const data: DashboardData = {
     generatedAt: new Date().toISOString().replace('T', ' ').slice(0, 16) + ' UTC',
@@ -47,6 +50,14 @@ async function main() {
             error: googlePlayResult.reason?.message ?? 'fetch failed',
           },
     webMetrics: webMetricsResult.status === 'fulfilled' ? webMetricsResult.value : [],
+    finance:
+      financeResult.status === 'fulfilled'
+        ? financeResult.value
+        : {
+            months: [],
+            lifetimeByCurrency: {},
+            error: financeResult.reason?.message ?? 'finance fetch failed',
+          },
   };
 
   const { dashboardPath, reviewPath, date } = writeDashboard(data);
