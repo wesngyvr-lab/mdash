@@ -26,10 +26,17 @@ function fmtUsd(n: number): string {
 }
 
 function appTable(m: AppMetrics): string {
-  let out = '| Window | Downloads | Revenue (USD)\\* |\n|---|---|---|\n';
+  let out = '| Window | Downloads | Paid | Proceeds |\n|---|---|---|---|\n';
   for (const w of WINDOWS) {
-    const { downloads, revenueUsd } = m.windows[w];
-    out += `| ${w} | ${fmtNum(downloads)} | ${fmtUsd(revenueUsd)} |\n`;
+    const { downloads, proceedsByCurrency, paidUnits } = m.windows[w];
+    const entries = Object.entries(proceedsByCurrency ?? {}).filter(([, v]) => v !== 0);
+    const money = entries.length
+      ? entries
+          .sort((a, b) => b[1] - a[1])
+          .map(([cur, amt]) => fmtMoney(amt, cur))
+          .join(' · ')
+      : '—';
+    out += `| ${w} | ${fmtNum(downloads)} | ${fmtNum(paidUnits ?? 0)} | ${money} |\n`;
   }
   return out;
 }
@@ -129,8 +136,8 @@ export function render(data: DashboardData): string {
     md += financeSection(data.finance);
     md += '\n';
   }
-  md += `\\* The Revenue column above is always 0 — the daily sales report does not\n`;
-  md += `carry proceeds. Real revenue is in the Revenue section below.\n\n`;
+  md += `_Proceeds are what Apple pays after its cut, in the currency of the sale._\n`;
+  md += `_Never FX-converted — a made-up rate in a revenue figure is worse than an honest split._\n\n`;
 
   if (data.webMetrics.length > 0) {
     md += `## Web Analytics (PostHog)\n\n`;

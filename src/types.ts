@@ -14,7 +14,13 @@ export type AppMetrics = {
   appName: string;
   windows: Record<Window, {
     downloads: number;
+    /** USD-denominated proceeds only. Kept because most stores report some
+     *  USD, but it is NOT the total — see proceedsByCurrency. */
     revenueUsd: number;
+    /** Proceeds keyed by currency of proceeds. Never FX-converted. */
+    proceedsByCurrency?: Record<string, number>;
+    /** Units on rows that carried proceeds (paid conversions, not downloads). */
+    paidUnits?: number;
   }>;
   rating: { average: number; count: number } | null;
   error?: string;

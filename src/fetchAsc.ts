@@ -49,6 +49,8 @@ type SalesRow = {
   units: number;
   developerProceeds: number;
   currencyOfProceeds: string;
+  sku: string;
+  parentIdentifier: string;
   beginDate: string;
   appleIdentifier: string;
 };
@@ -65,6 +67,8 @@ function parseTsv(tsv: string): SalesRow[] {
     currency: idx('Currency of Proceeds'),
     beginDate: idx('Begin Date'),
     appleId: idx('Apple Identifier'),
+    sku: idx('SKU'),
+    parentId: idx('Parent Identifier'),
   };
   return lines.slice(1).map((line) => {
     const cols = line.split('\t');
@@ -75,6 +79,8 @@ function parseTsv(tsv: string): SalesRow[] {
       currencyOfProceeds: cols[i.currency] ?? '',
       beginDate: cols[i.beginDate] ?? '',
       appleIdentifier: cols[i.appleId] ?? '',
+      sku: cols[i.sku] ?? '',
+      parentIdentifier: cols[i.parentId] ?? '',
     };
   });
 }
@@ -109,7 +115,19 @@ async function fetchOneDay(
   }
   const buf = Buffer.from(await res.arrayBuffer());
   const tsv = gunzipSync(buf).toString('utf8');
-  return parseTsv(tsv).filter((r) => r.appleIdentifier === appId);
+  const rows = parseTsv(tsv);
+  // An IAP row carries the IAP's OWN Apple Identifier, never the app's, so
+  // matching on appId alone silently discarded every subscription — which is
+  // why revenue read 0.00 in every window and every currency. IAP rows are
+  // tied back to the app through Parent Identifier, which holds the app's SKU.
+  const appSkus = new Set(
+    rows.filter((r) => r.appleIdentifier === appId).map((r) => r.sku).filter(Boolean)
+  );
+  return rows.filter(
+    (r) =>
+      r.appleIdentifier === appId ||
+      (r.parentIdentifier !== '' && appSkus.has(r.parentIdentifier))
+  );
 }
 
 // Run promises with limited concurrency
@@ -174,17 +192,23 @@ export async function fetchAsc(): Promise<AppMetrics> {
 
     let downloads = 0;
     let revenueUsd = 0;
+    let paidUnits = 0;
+    const proceedsByCurrency: Record<string, number> = {};
     for (const { date, rows } of allRows) {
       if (date < cutoffStr) continue;
       for (const r of rows) {
         if (isDownload(r.productTypeId)) downloads += r.units;
-        // Only count USD-denominated proceeds; mark in output
-        if (r.currencyOfProceeds === 'USD') {
-          revenueUsd += r.developerProceeds * r.units;
-        }
+        if (r.developerProceeds === 0 || !Number.isFinite(r.developerProceeds)) continue;
+        // Proceeds are per unit; a row can carry several.
+        const amount = r.developerProceeds * (r.units || 1);
+        const cur = r.currencyOfProceeds || 'UNKNOWN';
+        proceedsByCurrency[cur] =
+          Math.round(((proceedsByCurrency[cur] ?? 0) + amount) * 100) / 100;
+        if (cur === 'USD') revenueUsd = Math.round((revenueUsd + amount) * 100) / 100;
+        paidUnits += r.units;
       }
     }
-    result.windows[w] = { downloads, revenueUsd };
+    result.windows[w] = { downloads, revenueUsd, proceedsByCurrency, paidUnits };
   }
 
   return result;

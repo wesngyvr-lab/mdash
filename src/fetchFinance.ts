@@ -1,20 +1,16 @@
-// App Store revenue, from the FINANCIAL report.
+// App Store revenue as Apple has FORMALLY ACCOUNTED it, from the FINANCIAL
+// report. This is the reconciliation view: what Apple says it owes/paid.
 //
-// Why this exists separately from fetchAsc: the daily SALES/SUMMARY report
-// fetchAsc reads returns Developer Proceeds of 0 for every row, in every
-// currency — verified across all 365 days and 22 currencies. Subscription
-// proceeds simply are not in that report, so the dashboard showed $0.00
-// revenue while real money was coming in.
+// It is not the near-real-time number. fetchAsc reads the daily SALES report,
+// which carries proceeds on in-app-purchase rows within a day or two — that is
+// the source for the dashboard's 7d/30d/90d windows. The financial report lags
+// the sale by roughly a month, so recent revenue is simply absent from it.
 //
-// The FINANCIAL report has it. Same credentials, different endpoint.
-//
-// Two things to know about this report:
-//   - It is MONTHLY by Apple fiscal period, not daily, so it cannot be sliced
-//     into the 7d/30d/90d windows the rest of the dashboard uses. Revenue is
-//     reported per fiscal month instead. Apple fiscal months do not line up
-//     with calendar months; the row dates show the real span.
-//   - A month with no sales returns HTTP 404 with "There were no sales for
-//     the date specified." That is a zero, not a failure.
+// Two things to know:
+//   - Report dates are Apple FISCAL months, not calendar months. See
+//     recentMonths() — getting this wrong silently returns the wrong period.
+//   - A month with no sales returns HTTP 404 "There were no sales for the date
+//     specified." That is a zero, not a failure.
 //
 // Proceeds stay in their original currency and are never converted — an
 // invented FX rate in a revenue number is worse than an honest split.
@@ -68,12 +64,25 @@ function signJwt(keyId: string, issuerId: string, keyPath: string): string {
   });
 }
 
-/** Last MONTHS_BACK report dates as `YYYY-MM`, newest first. */
+/** Report dates as `FY-MM`, newest first.
+ *
+ *  These are Apple FISCAL months, not calendar months. Apple's fiscal year
+ *  starts in late September, so FY2026 M1 is October 2025 and FY2026 M8 came
+ *  back spanning 05/03/2026..05/30/2026. Passing a calendar month here asks
+ *  for a period roughly three months earlier than intended — which is how a
+ *  13-month sweep managed to miss every month the app was monetized.
+ *
+ *  Calendar month -> fiscal month is +4 (Oct = 1), rolling the year. The exact
+ *  boundaries drift by a few days each year; the report's own Start/End Date
+ *  columns are the authority, which is why the rendered table shows them. */
 function recentMonths(now = new Date()): string[] {
   const out: string[] = [];
   for (let i = 0; i < MONTHS_BACK; i++) {
     const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
-    out.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`);
+    const cal = d.getUTCMonth() + 1; // 1-12
+    const fiscalMonth = ((cal + 2) % 12) + 1; // Oct(10) -> 1, Jan(1) -> 4
+    const fiscalYear = cal >= 10 ? d.getUTCFullYear() + 1 : d.getUTCFullYear();
+    out.push(`${fiscalYear}-${String(fiscalMonth).padStart(2, '0')}`);
   }
   return out;
 }
