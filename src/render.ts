@@ -25,8 +25,13 @@ function fmtUsd(n: number): string {
   });
 }
 
+/** Days of missing reports below which the lag is Apple's normal publishing
+ *  delay rather than something the reader needs to act on. */
+const LAG_TOLERANCE_DAYS = 3;
+
 function appTable(m: AppMetrics): string {
   const missing = m.coverage?.missingRecentDays ?? 0;
+  const stale = missing >= LAG_TOLERANCE_DAYS;
 
   let out = '| Window | Downloads | Paid | Proceeds |\n|---|---|---|---|\n';
   for (const w of WINDOWS) {
@@ -47,8 +52,10 @@ function appTable(m: AppMetrics): string {
           .join(' · ')
       : '—';
     // A partly covered window is a real total over a shorter span than its
-    // label claims, so flag it rather than let the label speak for it.
-    const partial = missing > 0 ? ' ⚠️' : '';
+    // label claims, so flag it rather than let the label speak for it — but
+    // only once the gap exceeds normal publishing lag, or every row carries a
+    // warning every day and the mark stops meaning anything.
+    const partial = stale ? ' ⚠️' : '';
     out += `| ${w}${partial} | ${fmtNum(downloads)} | ${fmtNum(paidUnits ?? 0)} | ${money} |\n`;
   }
   return out;
@@ -61,12 +68,12 @@ function coverageNote(m: AppMetrics): string {
   if (c.latestDataDate === null) {
     return `\n> ⚠️ No sales reports available for any of the last 365 days. Check the vendor number and the API key's Sales and Reports access.\n`;
   }
-  // One or two missing days is Apple's normal publishing lag, not a fault.
-  if (c.missingRecentDays < 3) return '';
+  if (c.missingRecentDays < LAG_TOLERANCE_DAYS) return '';
   return (
     `\n> ⚠️ **Reports stop at ${c.latestDataDate}** — ${c.missingRecentDays} days with no report. ` +
     `Windows marked ⚠️ cover less time than their label says, and shorter windows have no data at all. ` +
-    `Check Sales and Trends in App Store Connect: if it is also empty, the gap is Apple's, not this tool's.\n`
+    `Check Sales and Trends in App Store Connect. If it still shows sales, this is the wrong vendor number — ` +
+    `an account can hold several, and reports move between them. If it is also empty, the gap is Apple's.\n`
   );
 }
 

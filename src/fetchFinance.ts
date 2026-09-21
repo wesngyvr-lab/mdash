@@ -44,7 +44,15 @@ function loadEnv() {
   const keyId = process.env.ASC_KEY_ID;
   const issuerId = process.env.ASC_ISSUER_ID;
   const keyPath = process.env.ASC_KEY_PATH;
-  const vendorNumber = process.env.ASC_VENDOR_NUMBER;
+  // An account can carry more than one vendor number, and the endpoints do not
+  // agree on which one they accept. TileBuddy's sales reports live under one
+  // vendor while the financial reports live under another: asking
+  // financeReports for the sales vendor returns
+  // "Invalid vendor number specified", and asking salesReports for the finance
+  // vendor returns 404 for every recent day. Falling back keeps single-vendor
+  // setups working without configuration.
+  const vendorNumber =
+    process.env.ASC_FINANCE_VENDOR_NUMBER || process.env.ASC_VENDOR_NUMBER;
   if (!keyId || !issuerId || !keyPath || !vendorNumber) {
     throw new Error(
       'Missing ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_PATH / ASC_VENDOR_NUMBER'
@@ -109,7 +117,23 @@ async function fetchOneMonth(
   // "No sales for the date specified" — a real zero, not an error.
   if (res.status === 404) return empty;
   if (!res.ok) {
-    throw new Error(`financeReports ${month}: HTTP ${res.status}`);
+    // Apple's `detail` is the whole diagnosis here and a bare status code
+    // hides it. Thirteen months of "HTTP 400" told us nothing; the body said
+    // "Invalid vendor number specified", which named the fix outright.
+    let detail = '';
+    try {
+      const body = (await res.json()) as { errors?: Array<{ detail?: string }> };
+      detail = body.errors?.[0]?.detail ?? '';
+    } catch {
+      // Non-JSON error body; the status code is all we have.
+    }
+    const hint =
+      res.status === 400 && /vendor/i.test(detail)
+        ? ' Set ASC_FINANCE_VENDOR_NUMBER — financial reports can sit under a different vendor number than sales.'
+        : '';
+    throw new Error(
+      `financeReports ${month}: HTTP ${res.status}${detail ? ` — ${detail}` : ''}${hint}`
+    );
   }
 
   const buf = Buffer.from(await res.arrayBuffer());
