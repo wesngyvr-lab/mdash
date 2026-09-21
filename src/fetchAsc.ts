@@ -93,7 +93,33 @@ function isDownload(productTypeId: string): boolean {
   return productTypeId.startsWith('1') && !productTypeId.startsWith('I');
 }
 
+/**
+ * One day's rows, from whichever vendor number holds them.
+ *
+ * Apple can move an app's sales reporting to a new vendor number. TileBuddy's
+ * did on 2026-09-03: the old vendor serves every day up to 09-02 and 404s
+ * after, the new one 404s before and serves every day since. Querying one
+ * alone truncates the history at the handover — which is how "7d: 0 downloads"
+ * got printed while the App Store was doing ~100 a day.
+ *
+ * Vendors are tried in order and the FIRST with rows wins, rather than summing
+ * across them. The two ranges were verified not to overlap, but first-wins
+ * cannot double-count even if a future handover does.
+ */
 async function fetchOneDay(
+  date: string,
+  vendorNumbers: string[],
+  token: string,
+  appId: string
+): Promise<SalesRow[]> {
+  for (const vendorNumber of vendorNumbers) {
+    const rows = await fetchOneDayFromVendor(date, vendorNumber, token, appId);
+    if (rows.length > 0) return rows;
+  }
+  return [];
+}
+
+async function fetchOneDayFromVendor(
   date: string,
   vendorNumber: string,
   token: string,
@@ -159,7 +185,13 @@ export async function fetchAsc(): Promise<AppMetrics> {
     rating: null,
   };
 
-  if (!env.vendorNumber) {
+  // Comma-separated, because an app's reporting can move between vendor
+  // numbers and the history then lives across both.
+  const vendorNumbers = (env.vendorNumber ?? '')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
+  if (vendorNumbers.length === 0) {
     result.error =
       'ASC_VENDOR_NUMBER not set. Find at appstoreconnect.apple.com → Payments and Financial Reports';
     return result;
@@ -176,7 +208,7 @@ export async function fetchAsc(): Promise<AppMetrics> {
   console.log(`[ASC] Fetching ${dates.length} daily reports (concurrency 5)...`);
   const allRows = await runConcurrent(dates, 5, async (date) => {
     try {
-      const rows = await fetchOneDay(date, env.vendorNumber!, token, env.appId);
+      const rows = await fetchOneDay(date, vendorNumbers, token, env.appId);
       return { date, rows };
     } catch (err) {
       console.warn(`[ASC] ${date}: ${(err as Error).message}`);
