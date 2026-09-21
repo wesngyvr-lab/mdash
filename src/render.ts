@@ -1,6 +1,6 @@
 import { writeFileSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
-import { WINDOWS, type AppMetrics, type DashboardData, type WebMetrics } from './types.js';
+import { WINDOWS, WINDOW_DAYS, type AppMetrics, type DashboardData, type WebMetrics } from './types.js';
 import type { FinanceMetrics } from './fetchFinance.js';
 
 const OUTPUT_DIR =
@@ -26,8 +26,18 @@ function fmtUsd(n: number): string {
 }
 
 function appTable(m: AppMetrics): string {
+  const missing = m.coverage?.missingRecentDays ?? 0;
+
   let out = '| Window | Downloads | Paid | Proceeds |\n|---|---|---|---|\n';
   for (const w of WINDOWS) {
+    // A window shorter than the reporting gap contains no reported days at
+    // all, so its totals are zero for want of data, not for want of sales.
+    // Printing "0" there asserts something the reports do not support.
+    if (missing >= WINDOW_DAYS[w]) {
+      out += `| ${w} | no data | no data | no data |\n`;
+      continue;
+    }
+
     const { downloads, proceedsByCurrency, paidUnits } = m.windows[w];
     const entries = Object.entries(proceedsByCurrency ?? {}).filter(([, v]) => v !== 0);
     const money = entries.length
@@ -36,9 +46,28 @@ function appTable(m: AppMetrics): string {
           .map(([cur, amt]) => fmtMoney(amt, cur))
           .join(' · ')
       : '—';
-    out += `| ${w} | ${fmtNum(downloads)} | ${fmtNum(paidUnits ?? 0)} | ${money} |\n`;
+    // A partly covered window is a real total over a shorter span than its
+    // label claims, so flag it rather than let the label speak for it.
+    const partial = missing > 0 ? ' ⚠️' : '';
+    out += `| ${w}${partial} | ${fmtNum(downloads)} | ${fmtNum(paidUnits ?? 0)} | ${money} |\n`;
   }
   return out;
+}
+
+/** Warns when the store's reports lag far enough to distort every window. */
+function coverageNote(m: AppMetrics): string {
+  const c = m.coverage;
+  if (!c) return '';
+  if (c.latestDataDate === null) {
+    return `\n> ⚠️ No sales reports available for any of the last 365 days. Check the vendor number and the API key's Sales and Reports access.\n`;
+  }
+  // One or two missing days is Apple's normal publishing lag, not a fault.
+  if (c.missingRecentDays < 3) return '';
+  return (
+    `\n> ⚠️ **Reports stop at ${c.latestDataDate}** — ${c.missingRecentDays} days with no report. ` +
+    `Windows marked ⚠️ cover less time than their label says, and shorter windows have no data at all. ` +
+    `Check Sales and Trends in App Store Connect: if it is also empty, the gap is Apple's, not this tool's.\n`
+  );
 }
 
 function ratingLine(m: AppMetrics): string {
@@ -54,6 +83,7 @@ function appSection(title: string, m: AppMetrics): string {
   }
   s += appTable(m) + '\n';
   s += ratingLine(m) + '\n';
+  s += coverageNote(m);
   if (m.error) s += `\n> ⚠️ ${m.error}\n`;
   return s;
 }
@@ -154,7 +184,16 @@ export function renderFridayReview(data: DashboardData, date: string): string {
   let md = `# Friday Review — ${date}\n\n`;
   md += `Dashboard: ${dashLink}\n\n`;
   md += `## Numbers (snapshot)\n\n`;
-  md += `**App Store (iOS) downloads:** 7d ${data.appStore.windows['7d'].downloads} · 30d ${data.appStore.windows['30d'].downloads} · 90d ${data.appStore.windows['90d'].downloads}\n\n`;
+  // Same reasoning as appTable: during a reporting gap these read as real
+  // zeros, and this line is the one people actually paste into a review.
+  const iosDl = (w: '7d' | '30d' | '90d') =>
+    (data.appStore.coverage?.missingRecentDays ?? 0) >= WINDOW_DAYS[w]
+      ? 'no data'
+      : String(data.appStore.windows[w].downloads);
+  md += `**App Store (iOS) downloads:** 7d ${iosDl('7d')} · 30d ${iosDl('30d')} · 90d ${iosDl('90d')}\n\n`;
+  if ((data.appStore.coverage?.missingRecentDays ?? 0) >= 3) {
+    md += `> ⚠️ App Store reports stop at ${data.appStore.coverage?.latestDataDate}. Treat the iOS numbers above as covering less time than their labels say.\n\n`;
+  }
   md += `**Google Play downloads:** _manual entry — pull from Play Console_\n\n`;
   for (const w of data.webMetrics) {
     md += `**${w.site} pageviews:** 7d ${w.windows['7d'].pageviews} · 30d ${w.windows['30d'].pageviews} (uniques: 7d ${w.windows['7d'].uniqueVisitors} · 30d ${w.windows['30d'].uniqueVisitors})\n\n`;
