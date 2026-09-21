@@ -7,6 +7,10 @@
        {{HOME}}      → /Users/yourname
        {{NPM_BIN}}   → output of `which npm` (e.g. /usr/local/bin/npm or /opt/homebrew/bin/npm)
        {{LABEL}}     → reverse-DNS unique label (e.g. com.yourname.mdash)
+       Keep the single quotes around the path in the cd. Without them a
+       directory containing a space ("~/Work Stuff/mdash") splits into two
+       arguments, cd fails, and launchd reports nothing -- the job just
+       never runs.
     2. Save as ~/Library/LaunchAgents/{{LABEL}}.plist
     3. Load: launchctl bootstrap gui/$UID ~/Library/LaunchAgents/{{LABEL}}.plist
     4. Verify: launchctl list | grep mdash
@@ -25,7 +29,7 @@
     <array>
         <string>/bin/zsh</string>
         <string>-lc</string>
-        <string>cd {{HOME}}/path/to/mdash &amp;&amp; {{NPM_BIN}} run dashboard &amp;&amp; /usr/bin/osascript -e 'display notification "Dashboard updated" with title "mdash" sound name "Glass"'</string>
+        <string>cd '{{HOME}}/path/to/mdash' &amp;&amp; {{NPM_BIN}} run dashboard &amp;&amp; /usr/bin/osascript -e 'display notification "Dashboard updated" with title "mdash" sound name "Glass"'</string>
     </array>
 
     <key>StartCalendarInterval</key>

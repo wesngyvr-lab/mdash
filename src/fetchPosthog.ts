@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import './http.js';
 import { WINDOWS, WINDOW_DAYS, emptyWindows, type WebMetrics, type Window } from './types.js';
+import { pathToFileURL } from 'node:url';
 
 function loadEnv() {
   const apiKey = process.env.POSTHOG_API_KEY;
@@ -141,7 +142,12 @@ export async function fetchPosthog(): Promise<WebMetrics[]> {
   );
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL, not a template string: import.meta.url percent-encodes the
+// path, so a directory containing a space ("03 Consulting") never matches a
+// hand-built `file://` + argv[1]. This guard silently stopped firing when the
+// repo moved into a folder with a space in its name, which is why the npm
+// `test:*` scripts printed nothing at all.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   fetchPosthog()
     .then((data) => console.log(JSON.stringify(data, null, 2)))
     .catch((err) => {

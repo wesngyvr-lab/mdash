@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import { readFileSync } from 'fs';
 import { gunzipSync } from 'zlib';
 import { WINDOWS, WINDOW_DAYS, emptyWindows, type AppMetrics, type Window } from './types.js';
+import { pathToFileURL } from 'node:url';
 
 const ASC_API = 'https://api.appstoreconnect.apple.com/v1';
 
@@ -211,11 +212,46 @@ export async function fetchAsc(): Promise<AppMetrics> {
     result.windows[w] = { downloads, revenueUsd, proceedsByCurrency, paidUnits };
   }
 
+  result.coverage = coverage(allRows);
   return result;
 }
 
+/** How far Apple's reports actually reach.
+ *
+ *  `fetchOneDay` answers a missing day with `[]`, because a 404 there is
+ *  normal for today and yesterday. Summed over a window, a run of missing
+ *  days is indistinguishable from real zeros — which is how the dashboard
+ *  came to report "7d: 0 downloads" during a 17-day reporting gap. Counting
+ *  the gap lets the renderer say "no data" where it would otherwise state a
+ *  zero it cannot support. */
+function coverage(
+  allRows: Array<{ date: string; rows: SalesRow[] }>
+): { latestDataDate: string | null; missingRecentDays: number } {
+  const withData = allRows.filter((r) => r.rows.length > 0).map((r) => r.date);
+  if (withData.length === 0) {
+    return { latestDataDate: null, missingRecentDays: allRows.length };
+  }
+  const latestDataDate = withData.reduce((a, b) => (a > b ? a : b));
+
+  // allRows is ordered newest-first (dates were built from daysAgo(1..365)),
+  // but sort rather than trust it, so a change in build order cannot silently
+  // turn this into a wrong number.
+  const newestFirst = [...allRows].sort((a, b) => b.date.localeCompare(a.date));
+  let missingRecentDays = 0;
+  for (const r of newestFirst) {
+    if (r.rows.length > 0) break;
+    missingRecentDays++;
+  }
+  return { latestDataDate, missingRecentDays };
+}
+
 // Run as standalone for testing
-if (import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL, not a template string: import.meta.url percent-encodes the
+// path, so a directory containing a space ("03 Consulting") never matches a
+// hand-built `file://` + argv[1]. This guard silently stopped firing when the
+// repo moved into a folder with a space in its name, which is why the npm
+// `test:*` scripts printed nothing at all.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   fetchAsc()
     .then((data) => console.log(JSON.stringify(data, null, 2)))
     .catch((err) => {

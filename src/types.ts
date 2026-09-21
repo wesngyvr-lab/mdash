@@ -23,6 +23,20 @@ export type AppMetrics = {
     paidUnits?: number;
   }>;
   rating: { average: number; count: number } | null;
+  /** How far the underlying reports actually reach.
+   *
+   *  A store that has published nothing for a week still answers every
+   *  request — Apple returns 404 per missing day — so the aggregate comes
+   *  back as a clean `0`. Without this, a reporting outage and a week of no
+   *  sales render identically, and the dashboard states the wrong one as
+   *  fact. Whoever reads a window needs to know it is covered before they
+   *  read the number in it. */
+  coverage?: {
+    /** Newest date (`YYYY-MM-DD`) that returned any rows, or null if none did. */
+    latestDataDate: string | null;
+    /** Consecutive days, ending yesterday, for which no report exists. */
+    missingRecentDays: number;
+  };
   error?: string;
 };
 
