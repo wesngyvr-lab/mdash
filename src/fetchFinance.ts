@@ -51,14 +51,23 @@ function loadEnv() {
   // "Invalid vendor number specified", and asking salesReports for the finance
   // vendor returns 404 for every recent day. Falling back keeps single-vendor
   // setups working without configuration.
-  const vendorNumber =
+  const raw =
     process.env.ASC_FINANCE_VENDOR_NUMBER || process.env.ASC_VENDOR_NUMBER;
-  if (!keyId || !issuerId || !keyPath || !vendorNumber) {
+  // Comma-separated for the same reason sales is: a vendor change splits the
+  // history. It splits payouts too, and the two do not move together — a new
+  // vendor starts serving sales immediately but has no financial report until
+  // its first payout runs, so for a while the money lives under the old vendor
+  // and the units under the new one.
+  const vendorNumbers = (raw ?? '')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
+  if (!keyId || !issuerId || !keyPath || vendorNumbers.length === 0) {
     throw new Error(
       'Missing ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_PATH / ASC_VENDOR_NUMBER'
     );
   }
-  return { keyId, issuerId, keyPath, vendorNumber };
+  return { keyId, issuerId, keyPath, vendorNumbers };
 }
 
 function signJwt(keyId: string, issuerId: string, keyPath: string): string {
@@ -93,6 +102,64 @@ function recentMonths(now = new Date()): string[] {
     out.push(`${fiscalYear}-${String(fiscalMonth).padStart(2, '0')}`);
   }
   return out;
+}
+
+/**
+ * Which of the configured vendor numbers financeReports will actually accept.
+ *
+ * A vendor that serves sales need not serve finance: a new one starts
+ * reporting units immediately but has no financial report until its first
+ * payout runs, and Apple answers "Invalid vendor number specified" until then.
+ * That is a standing condition, not a per-month one, so it is settled once
+ * with a single probe rather than rediscovered on all thirteen months.
+ *
+ * The probe matters for more than tidiness. This endpoint rate-limits harder
+ * than salesReports, and retrying every month against every vendor doubled the
+ * request count enough to make good months fail — the first attempt at this
+ * lost three months that the old vendor serves without complaint when asked
+ * alone.
+ */
+async function usableVendors(
+  vendorNumbers: string[],
+  probeMonth: string,
+  token: string
+): Promise<{ usable: string[]; rejected: string[] }> {
+  if (vendorNumbers.length === 1) return { usable: vendorNumbers, rejected: [] };
+
+  const usable: string[] = [];
+  const rejected: string[] = [];
+  for (const v of vendorNumbers) {
+    try {
+      await fetchOneMonth(probeMonth, v, token);
+      usable.push(v);
+    } catch (err) {
+      // Only a rejected vendor number disqualifies one. Anything else — a
+      // missing month, a 500, a rate limit — says nothing about the vendor,
+      // so keep it and let the per-month fetch report the real problem.
+      if (/invalid vendor number/i.test((err as Error).message)) rejected.push(v);
+      else usable.push(v);
+    }
+  }
+  return { usable: usable.length > 0 ? usable : vendorNumbers, rejected };
+}
+
+/** A month's proceeds from whichever usable vendor holds them. */
+async function fetchMonthAcrossVendors(
+  month: string,
+  vendorNumbers: string[],
+  token: string
+): Promise<FinanceMonth> {
+  let lastError: Error | null = null;
+  for (const vendorNumber of vendorNumbers) {
+    try {
+      const m = await fetchOneMonth(month, vendorNumber, token);
+      if (Object.keys(m.proceedsByCurrency).length > 0 || m.units > 0) return m;
+    } catch (err) {
+      lastError = err as Error;
+    }
+  }
+  if (lastError) throw lastError;
+  return { month, proceedsByCurrency: {}, units: 0 };
 }
 
 async function fetchOneMonth(
@@ -192,6 +259,16 @@ export async function fetchFinance(): Promise<FinanceMetrics> {
   const token = signJwt(env.keyId, env.issuerId, env.keyPath);
   const months = recentMonths();
 
+  const { usable, rejected } = await usableVendors(
+    env.vendorNumbers,
+    months[0],
+    token
+  );
+  if (rejected.length > 0) {
+    console.log(
+      `[Finance] vendor(s) ${rejected.join(', ')} have no financial reports yet; using ${usable.join(', ')}`
+    );
+  }
   console.log(`[Finance] Fetching ${months.length} monthly reports...`);
 
   // Sequential on purpose: 13 requests, and Apple rate-limits this endpoint
@@ -199,7 +276,7 @@ export async function fetchFinance(): Promise<FinanceMetrics> {
   const errors: string[] = [];
   for (const m of months) {
     try {
-      result.months.push(await fetchOneMonth(m, env.vendorNumber, token));
+      result.months.push(await fetchMonthAcrossVendors(m, usable, token));
     } catch (err: any) {
       errors.push(err.message);
       result.months.push({ month: m, proceedsByCurrency: {}, units: 0 });
