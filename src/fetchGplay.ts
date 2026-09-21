@@ -3,18 +3,22 @@ import './http.js';
 import { google } from 'googleapis';
 import { WINDOWS, WINDOW_DAYS, emptyWindows, type AppMetrics, type Window } from './types.js';
 import { pathToFileURL } from 'node:url';
+import { fetchInstalls, fetchSubscriptions, activeOnLatestDate, fetchSales, proceedsInWindow } from './gplayReports.js';
 
-// Google Play has no clean "downloads per day" API endpoint.
-// The canonical source is bulk CSV reports in a Cloud Storage bucket
-// (e.g. gs://pubsite_prod_xxxx/stats/installs/...).
+// Google Play has no clean "downloads per day" API endpoint. The canonical
+// source is bulk CSV reports in the Console's Cloud Storage bucket, read here
+// via ./gplayReports.ts.
 //
-// For v1, this fetcher:
-//   - Authenticates with the service account (proves the JSON key works)
-//   - Pulls the last 7 days of reviews via androidpublisher.reviews.list
-//     to derive a recent rating average
-//   - Leaves downloads/revenue as 0 with a note in `error`
+// Until 2026-09-21 this fetcher pulled reviews only and left downloads and
+// revenue at 0 with an explanatory string in `error`. The dashboard rendered
+// the 0 and dropped the note, so Play showed a confident zero across every
+// window — including 365d — for a store that had been taking money since
+// August. GPLAY_REPORT_BUCKET had been configured the whole time and nothing
+// read it.
 //
-// v1.1 will add Cloud Storage report parsing for full install counts.
+// Still not read here: `earnings/*.zip`, which is where actual proceeds live.
+// Installs and active subscriptions come from the CSVs; revenue stays 0 and
+// SAYS so, rather than implying none was earned.
 
 function loadEnv() {
   const path = process.env.GPLAY_SERVICE_ACCOUNT_PATH;
@@ -40,7 +44,47 @@ export async function fetchGplay(): Promise<AppMetrics> {
   }
 
   const env = loadEnv();
-  result.error = 'Downloads/revenue require GCS bucket setup — manual entry for v1';
+  const bucket = process.env.GPLAY_REPORT_BUCKET;
+
+  // Installs and active subscriptions from the report bucket.
+  if (bucket) {
+    try {
+      const installs = await fetchInstalls({ keyFile: env.path, bucket, packageName: env.pkg, days: 365 });
+      const today = Date.now();
+      for (const w of WINDOWS) {
+        const since = today - WINDOW_DAYS[w] * 86_400_000;
+        result.windows[w].downloads = installs
+          .filter(d => Date.parse(d.date) >= since)
+          .reduce((n, d) => n + d.installs, 0);
+      }
+
+      const subs = await fetchSubscriptions({ keyFile: env.path, bucket, packageName: env.pkg, days: 90 });
+      const active = activeOnLatestDate(subs);
+      result.activeSubscriptions = active;
+
+      const latest = installs.at(-1);
+      result.reportsThrough = latest?.date ?? null;
+      result.activeDevices = latest?.activeDevices ?? null;
+
+      // Gross proceeds from the monthly sales reports. Per-currency and never
+      // FX-converted — these rows carry IDR, USD and CAD side by side.
+      const sales = await fetchSales({ keyFile: env.path, bucket, packageName: env.pkg, days: 365 });
+      for (const w of WINDOWS) {
+        const since = today - WINDOW_DAYS[w] * 86_400_000;
+        const { byCurrency, paidUnits } = proceedsInWindow(sales, since);
+        result.windows[w].proceedsByCurrency = byCurrency;
+        result.windows[w].paidUnits = paidUnits;
+        // revenueUsd stays USD-only on purpose: it is not the total, and the
+        // dashboard renders proceedsByCurrency beside it.
+        result.windows[w].revenueUsd = byCurrency.USD ?? 0;
+      }
+      result.salesThrough = sales.at(-1)?.date ?? null;
+    } catch (err) {
+      result.error = `Play reports: ${(err as Error).message}`;
+    }
+  } else {
+    result.error = 'GPLAY_REPORT_BUCKET not set — downloads and subscriptions unavailable';
+  }
 
   try {
     const auth = new google.auth.GoogleAuth({

@@ -37,6 +37,18 @@ export type AppMetrics = {
     /** Consecutive days, ending yesterday, for which no report exists. */
     missingRecentDays: number;
   };
+  /** Play only: active subscribers on the latest date the reports cover.
+   *  The one place ACTIVE counts exist — PostHog sees purchases and never
+   *  cancellations; the app database has an expiry but not the store or plan. */
+  activeSubscriptions?: { date: string | null; total: number; byPlan: Record<string, number>; byCountry: Record<string, number> };
+  /** Play reports lag by a few days. Render this so a stale figure cannot be
+   *  read as today's. */
+  reportsThrough?: string | null;
+  /** Latest charged-order date in the sales reports. Refreshes faster than
+   *  the install CSVs, so the two lag differently and both are surfaced. */
+  salesThrough?: string | null;
+  /** Devices currently holding the app — a level, unlike downloads. */
+  activeDevices?: number | null;
   error?: string;
 };
 
